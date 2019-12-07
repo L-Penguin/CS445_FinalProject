@@ -13,23 +13,46 @@ class FeatureMapHook(nn.Module):
     def forward(self, input):
         self.input = input
         return input
+
     def get_feature_map(self):
         if detach:
             return self.input.detach()
         else:
             return self.input
 
-def content_loss_fn(feature_map, target):
-    loss = 0.0
-    return loss
+class ContentLoss():
+    def __init__(self, device):
+        super(ContentLoss, self).__init__()
+        self.device = device
 
-def mrf_style_loss_fn(feature_map, target):
-    loss = 0.0
-    return loss
+    def forward(self, feature_map, target):
+        loss = 0.0
+        return loss
 
-def tv_loss_fn(input):
-    loss = 0.0
-    return loss
+class MRFStyleLoss(feature_map, target):
+    def __init__(self, target, patch_size, gpu_chunk_size=256, device):
+        super(MRFStyleLoss, self).__init__()
+        self.patch_size = patch_size
+        self.device = device
+
+        # don't forget to initialze these for the first time !!!
+        self.patches = []
+        self.patches_norm = []
+        self.gpu_chunk_size = gpu_chunk_size
+
+    def update(self, new_feature_map):
+        #do update here
+
+    def forward(self, feature_map, target):
+        loss = 0.0
+        return loss
+
+class TVLoss(input):
+    def __init__(self):
+        super(TVLoss, self).__init__()
+    def forward(self, input):
+        loss = 0.0
+        return loss
 
 
 # class ContentLoss(_Loss):

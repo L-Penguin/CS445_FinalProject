@@ -4,18 +4,18 @@ import torchvision.models as models
 from loss_libs import ContentLoss, MRFStyleLoss, TVLoss
 
 class MRFCNN(nn.Module):
-    def __init__(self, content_img, style_img, content_loss_weight, tvloss_weight, patch_size, device):
+    def __init__(self, content_img, style_img, style_loss_weight, tvloss_weight, device):
         super(MRFCNN, self).__init__()
         self.content_loss_weight = content_loss_weight
         self.tvloss_weight = tvloss_weight
         self.MRFStyleLoss_idx = [11, 20]
         self.ContentLoss_idx = [22]
-        self.patch_size = patch_size
+        self.patch_size = 3
         self.device = device
 
         self.ContentLosses = []
         self.MRFStyleLosses = []
-        self.TVLoss = []
+        self.tv_loss_fn = None
 
         self.target_content_feature_maps = []
         self.target_style_feature_maps = []
@@ -34,6 +34,7 @@ class MRFCNN(nn.Module):
         self.model(new_style_img.clone())
         for i, each in enumerate(style_hook_layers):
             self.target_style_feature_maps[i] = each.get_feature_map()
+            self.MRFStyleLoss[i].update(self.target_style_feature_maps[i])
 
     def forward(self, synth_img):
         """
@@ -61,13 +62,13 @@ class MRFCNN(nn.Module):
 
         content_loss = 0.0
         for i, each in enumerate(content_features):
-            content_loss += content_loss_fn(each, self.target_content_feature_maps[i])
+            content_loss += ContentLoss[i](each, self.target_content_feature_maps[i])
 
         style_loss = 0.0
         for i, each in enumerate(style_feature):
-            style_loss += mrf_style_loss_fn(each, self.target_style_feature_maps[i]);
+            style_loss += MRFStyleLosses[i](each, self.target_style_feature_maps[i]);
 
-        total_loss = self.tvloss_weight * tv_loss + style_loss + self.content_loss_weight * content_loss
+        total_loss = self.tvloss_weight * tv_loss + self.style_loss_weight * style_loss + content_loss
 
         return total_loss
 
@@ -77,6 +78,7 @@ class MRFCNN(nn.Module):
         model = nn.Sequential()
         tv_hook = FeatureMapHook(True, self.device)
         model.add_module('TVLoss_hook_1', hook).to(self.device);
+        tv_loss_fn = TVLoss()
         mrf_cnt = 1
         content_cnt = 1
 
@@ -87,7 +89,9 @@ class MRFCNN(nn.Module):
 
             # MRFs layer after relu3_1 and relu4_1, so 11th and 20th
             if i in MRFStyleLoss_idx:
-                target_style_feature_maps.append(model(style_img).detach())
+                feature_map = model(style_img).detach()
+                target_style_feature_maps.append(feature_map)
+                MRFStylelosses.append(MRFStyleLosses(feature_map, 3, 256, self.device))
                 hook = FeatureMapHook(True, self.device)
                 model.add_module('MRFStyleLoss_hook_{}'.format(mrf_cnt), hook).to(self.device)
                 style_hook_layers.append(hook)
@@ -95,7 +99,9 @@ class MRFCNN(nn.Module):
 
             # ContentLoss layer after relu4_2, so 22th
             if i in ContentLoss_idx:
-                target_content_feature_maps.append(model(content_img).detach())
+                feature_map = model(content_img).detach()
+                target_content_feature_maps.append(feature_map)
+                ContentLoss.append(ContentLoss(self.device))
                 hook = FeatureMapHook(True, self.device)
                 model.add_module('ContentLoss_hook_{}'.format(content_cnt), hook).to(self.device)
                 content_hook_layers.append(hook)
