@@ -55,9 +55,6 @@ class MRFCNN(nn.Module):
         for each in style_hook_layers:
             style_ret.append(each.get_feature_map())
 
-        return tvloss_hook.get_feature_map(), content_ret, style_ret
-
-    def calculate_total_loss(self, tv_feature, content_features, style_features):
         tv_loss = tv_loss_fn(input)
 
         content_loss = 0.0
