@@ -36,6 +36,7 @@ class MRFCNN(nn.Module):
         self.model(new_content_img.clone())
         for i, each in enumerate(self.content_hook_layers):
             self.target_content_feature_maps[i] = each.get_feature_map()
+            self.ContentLosses[i].update(self.target_content_feature_maps[i])
 
         self.model(new_style_img.clone())
         for i, each in enumerate(self.style_hook_layers):
@@ -53,23 +54,16 @@ class MRFCNN(nn.Module):
 
         # for each_style_feature_maps in range(target_style_feature_maps):
         #     total_loss += MRFStyleLoss()
-        content_ret = []
-        for each in self.content_hook_layers:
-            content_ret.append(each.get_feature_map())
-
-        style_ret = []
-        for each in self.style_hook_layers:
-            style_ret.append(each.get_feature_map())
 
         tv_loss = self.tv_loss_fn(self.tvloss_hook.get_feature_map())
 
         content_loss = 0.0
-        for i, each in enumerate(content_ret):
-            content_loss += self.ContentLosses[i](each, self.target_content_feature_maps[i])
+        for i, each in enumerate(self.content_hook_layers):
+            content_loss += self.ContentLosses[i](each.get_feature_map())
 
         style_loss = 0.0
-        for i, each in enumerate(style_ret):
-            style_loss += self.MRFStyleLosses[i](each);
+        for i, each in enumerate(self.style_hook_layers):
+            style_loss += self.MRFStyleLosses[i](each.get_feature_map());
 
         total_loss = self.tvloss_weight * tv_loss + self.style_loss_weight * style_loss + content_loss
 
@@ -79,7 +73,7 @@ class MRFCNN(nn.Module):
         # create modified VGG for feature map inversion
         vgg19 = models.vgg19(pretrained=True).to(self.device)
         model = nn.Sequential()
-        self.tvloss_hook = FeatureMapHook(True, self.device)
+        self.tvloss_hook = FeatureMapHook(False, self.device)
         model.add_module('TVLoss_hook_1', self.tvloss_hook)
         self.tv_loss_fn = TVLoss()
         mrf_cnt = 1
@@ -95,7 +89,7 @@ class MRFCNN(nn.Module):
                 feature_map = model(style_img).detach()
                 self.target_style_feature_maps.append(feature_map)
                 self.MRFStyleLosses.append(MRFStyleLoss(feature_map, self.patch_size, self.device, self.gpu_chunk_size, self.syn_stride))
-                hook = FeatureMapHook(True, self.device)
+                hook = FeatureMapHook(False, self.device)
                 model.add_module('MRFStyleLoss_hook_{}'.format(mrf_cnt), hook)
                 self.style_hook_layers.append(hook)
                 mrf_cnt += 1
@@ -105,7 +99,7 @@ class MRFCNN(nn.Module):
                 feature_map = model(content_img).detach()
                 self.target_content_feature_maps.append(feature_map)
                 self.ContentLosses.append(ContentLoss(self.device))
-                hook = FeatureMapHook(True, self.device)
+                hook = FeatureMapHook(False, self.device)
                 model.add_module('ContentLoss_hook_{}'.format(content_cnt), hook)
                 self.content_hook_layers.append(hook)
                 content_cnt += 1

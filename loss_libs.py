@@ -25,14 +25,12 @@ class ContentLoss(nn.Module):
     def __init__(self, device):
         super(ContentLoss, self).__init__()
         self.device = device
-        self.loss = 0.0
 
     def update(self, content_map):
         self.content_map = content_map.detach()
 
-    def forward(self, syn_map, content_map):
-        self.loss = F.mse_loss(syn_map, content_map)
-        return self.loss
+    def forward(self, syn_map):
+        return F.mse_loss(syn_map, self.content_map)
 
 
 class MRFStyleLoss(nn.Module):
@@ -46,7 +44,6 @@ class MRFStyleLoss(nn.Module):
         self.style_patches = []
         self.style_patches_norm = []
         self.gpu_chunk_size = gpu_chunk_size
-        self.loss = 0.0
 
     def update(self, style_map):
         #do update here
@@ -73,6 +70,7 @@ class MRFStyleLoss(nn.Module):
         return patches
 
     def forward(self, syn_map):
+        loss = 0.0
         syn_patches = self.get_patches(syn_map, self.patch_size, self.syn_stride)
         max_response = []
 
@@ -93,17 +91,16 @@ class MRFStyleLoss(nn.Module):
             start, end = i, min(i + self.gpu_chunk_size, len(max_response))
             syn_idx = tuple(range(start, end))
             style_idx = tuple(max_response[start : end])
-            self.loss += torch.sum(torch.mean((syn_patches[syn_idx,:,:,:] - self.style_patches[style_idx,:,:,:]) ** 2, dim = [1,2,3]))
-        self.loss /= len(max_response)
+            loss += torch.sum(torch.mean((syn_patches[syn_idx,:,:,:] - self.style_patches[style_idx,:,:,:]) ** 2, dim = [1,2,3]))
+        loss /= len(max_response)
 
-        return self.loss
+        return loss
 
 
 
 class TVLoss(nn.Module):
     def __init__(self):
         super(TVLoss, self).__init__()
-        self.loss = 0.0
 
     def forward(self, input):
         img = input.squeeze().permute([1, 2, 0])
@@ -118,5 +115,4 @@ class TVLoss(nn.Module):
         gy = torch.cat((temp[:, 1:, :], temp[:, -1, :].unsqueeze(1)), dim=1)
         gy = gy - temp
 
-        self.loss = torch.mean(torch.pow(gx, 2)) + torch.mean(torch.pow(gy, 2))
-        return self.loss
+        return torch.mean(torch.pow(gx, 2)) + torch.mean(torch.pow(gy, 2))

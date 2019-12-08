@@ -10,7 +10,7 @@ from torch.autograd import Variable
 
 from model import MRFCNN
 from loss_libs import ContentLoss, MRFStyleLoss, TVLoss
-
+from torchviz import make_dot
 
 ################## parameter list, to be adjusted
 num_res = 3
@@ -20,9 +20,9 @@ gpu_chunck = 256
 style_stride = 2
 syn_stride = 2
 sample_step = 50
-content_path = "data/content1.jpg"
-style_path =  "data/style1.jpg"
-max_iter = 100
+content_path = "data/derek2.png"
+style_path =  "data/style.jpg"
+max_iter = 300
 iter = 0
 
 def get_transforms():
@@ -70,8 +70,8 @@ def main():
     # initialze net with the lowest resolution pair of images
     net = MRFCNN(pyr_content[0], pyr_style[0], style_weight, tv_weight, style_stride, syn_stride, gpu_chunck, device).to(device)
 
-    synthesis = None
-    net.train()
+    x = net(pyr_content[0].clone().requires_grad_(True).to(device))
+    print(net)
     global iter
     iter = 0
     for i in range(num_res):
@@ -84,20 +84,18 @@ def main():
             synthesis = upsample(H, W, synthesis, device)
             net.update_content_and_style_img(pyr_content[i], pyr_style[i])
 
-        optimizer = optim.LBFGS([synthesis], lr=1, max_iter=100)
+        optimizer = optim.LBFGS([synthesis], lr=1, max_iter=max_iter)
 
         def closure():
             global iter
             optimizer.zero_grad()
             loss = net(synthesis)
             loss.backward(retain_graph = True)
-            print(loss.item())
-            print(iter)
             if (iter + 1) % 10 == 0:
                 print('res-%d-iteration-%d: %f' % (i+1, iter + 1, loss.item()))
             # save image
             if (iter + 1) % sample_step == 0 or iter + 1 == max_iter:
-                img = denormalizer(synthesis.clone().squeeze().to(torch.device("cpu"))).unsqueeze(0)
+                img = denormalizer(synthesis.clone().squeeze().to(torch.device("cpu"))).to(device).clamp_(0,1).unsqueeze(0)
                 img = F.interpolate(img, size=content.shape[2:4], mode="bilinear")
                 torchvision.utils.save_image(img.squeeze(), 'res-%d-result-%d.jpg' % (i+1, iter + 1))
                 print("yeah!!!")
@@ -106,8 +104,7 @@ def main():
             if iter == max_iter:
                 iter = 0
             return loss
-        for s in range(max_iter):
-            optimizer.step(closure)
+        optimizer.step(closure)
 
 if __name__ == "__main__":
     main()
