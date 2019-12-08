@@ -1,17 +1,21 @@
 from __future__ import print_function
 import torch.nn as nn
 import torchvision.models as models
-from loss_libs import ContentLoss, MRFStyleLoss, TVLoss
+from loss_libs import ContentLoss, MRFStyleLoss, TVLoss, FeatureMapHook
 
 class MRFCNN(nn.Module):
-    def __init__(self, content_img, style_img, style_loss_weight, tvloss_weight, device):
+    def __init__(self, content_img, style_img, style_loss_weight, tvloss_weight, style_stride, syn_stride, gpu_chunk_size,  device):
         super(MRFCNN, self).__init__()
-        self.content_loss_weight = content_loss_weight
+        self.style_loss_weight = style_loss_weight
         self.tvloss_weight = tvloss_weight
         self.MRFStyleLoss_idx = [11, 20]
         self.ContentLoss_idx = [22]
         self.patch_size = 3
         self.device = device
+
+        self.style_stride = style_stride
+        self.syn_stride = syn_stride
+        self.gpu_chunk_size = gpu_chunk_size
 
         self.ContentLosses = []
         self.MRFStyleLosses = []
@@ -24,17 +28,19 @@ class MRFCNN(nn.Module):
         self.style_hook_layers = []
         self.tvloss_hook = None
 
-        self.model = construct_model(content_img, style_img)
+        self.model = self.construct_model(content_img, style_img)
+        self.update_content_and_style_img(content_img, style_img)
 
     def update_content_and_style_img(self, new_content_img, new_style_img):
+        print("------updating content and style images-------")
         self.model(new_content_img.clone())
-        for i, each in enumerate(content_hook_layers):
+        for i, each in enumerate(self.content_hook_layers):
             self.target_content_feature_maps[i] = each.get_feature_map()
 
         self.model(new_style_img.clone())
-        for i, each in enumerate(style_hook_layers):
+        for i, each in enumerate(self.style_hook_layers):
             self.target_style_feature_maps[i] = each.get_feature_map()
-            self.MRFStyleLoss[i].update(self.target_style_feature_maps[i])
+            self.MRFStyleLosses[i].update(self.target_style_feature_maps[i])
 
     def forward(self, synth_img):
         """
@@ -48,60 +54,60 @@ class MRFCNN(nn.Module):
         # for each_style_feature_maps in range(target_style_feature_maps):
         #     total_loss += MRFStyleLoss()
         content_ret = []
-        for each in content_hook_layers:
+        for each in self.content_hook_layers:
             content_ret.append(each.get_feature_map())
 
         style_ret = []
-        for each in style_hook_layers:
+        for each in self.style_hook_layers:
             style_ret.append(each.get_feature_map())
 
-        tv_loss = tv_loss_fn(input)
+        tv_loss = self.tv_loss_fn(self.tvloss_hook.get_feature_map())
 
         content_loss = 0.0
-        for i, each in enumerate(content_features):
-            content_loss += ContentLoss[i](each, self.target_content_feature_maps[i])
+        for i, each in enumerate(content_ret):
+            content_loss += self.ContentLosses[i](each, self.target_content_feature_maps[i])
 
         style_loss = 0.0
-        for i, each in enumerate(style_feature):
-            style_loss += MRFStyleLosses[i](each, self.target_style_feature_maps[i]);
+        for i, each in enumerate(style_ret):
+            style_loss += self.MRFStyleLosses[i](each);
 
         total_loss = self.tvloss_weight * tv_loss + self.style_loss_weight * style_loss + content_loss
 
-        return total_loss
+        return total_loss.requires_grad_(True)
 
     def construct_model(self, content_img, style_img):
         # create modified VGG for feature map inversion
-        vgg19 = models.vgg19(pretrained=True)
+        vgg19 = models.vgg19(pretrained=True).to(self.device)
         model = nn.Sequential()
-        tv_hook = FeatureMapHook(True, self.device)
-        model.add_module('TVLoss_hook_1', hook).to(self.device);
-        tv_loss_fn = TVLoss()
+        self.tvloss_hook = FeatureMapHook(True, self.device)
+        model.add_module('TVLoss_hook_1', self.tvloss_hook)
+        self.tv_loss_fn = TVLoss()
         mrf_cnt = 1
         content_cnt = 1
 
         for i in range(len(vgg19.features)):
-            if (content_cnt - 1) == len(ContentLoss_idx) and (mrf_cnt - 1) == len(MRFStyleLoss_idx):
+            if (content_cnt - 1) == len(self.ContentLoss_idx) and (mrf_cnt - 1) == len(self.MRFStyleLoss_idx):
                 break
-            model.add_module('vgg_{}'.format(i), vgg19[i]).to(self.device);
+            model.add_module('vgg_{}'.format(i), vgg19.features[i])
 
             # MRFs layer after relu3_1 and relu4_1, so 11th and 20th
-            if i in MRFStyleLoss_idx:
+            if i in self.MRFStyleLoss_idx:
                 feature_map = model(style_img).detach()
-                target_style_feature_maps.append(feature_map)
-                MRFStylelosses.append(MRFStyleLosses(feature_map, 3, 256, self.device))
+                self.target_style_feature_maps.append(feature_map)
+                self.MRFStyleLosses.append(MRFStyleLoss(feature_map, self.patch_size, self.device, self.gpu_chunk_size, self.syn_stride))
                 hook = FeatureMapHook(True, self.device)
-                model.add_module('MRFStyleLoss_hook_{}'.format(mrf_cnt), hook).to(self.device)
-                style_hook_layers.append(hook)
+                model.add_module('MRFStyleLoss_hook_{}'.format(mrf_cnt), hook)
+                self.style_hook_layers.append(hook)
                 mrf_cnt += 1
 
             # ContentLoss layer after relu4_2, so 22th
-            if i in ContentLoss_idx:
+            if i in self.ContentLoss_idx:
                 feature_map = model(content_img).detach()
-                target_content_feature_maps.append(feature_map)
-                ContentLoss.append(ContentLoss(self.device))
+                self.target_content_feature_maps.append(feature_map)
+                self.ContentLosses.append(ContentLoss(self.device))
                 hook = FeatureMapHook(True, self.device)
-                model.add_module('ContentLoss_hook_{}'.format(content_cnt), hook).to(self.device)
-                content_hook_layers.append(hook)
+                model.add_module('ContentLoss_hook_{}'.format(content_cnt), hook)
+                self.content_hook_layers.append(hook)
                 content_cnt += 1
 
         return model
